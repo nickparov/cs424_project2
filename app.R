@@ -1,610 +1,589 @@
-library(shinydashboard)
-library(data.table)
-library(lubridate)
-library(ggplot2)
-library(leaflet)
-library(scales)
 library(shiny)
-library(dplyr)
-library(tidyr)
+library(shinydashboard)
+library(ggplot2)
+library(lubridate)
+library(DT)
 library(jpeg)
 library(grid)
-library(DT)
+library(leaflet)
+library(scales)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(RColorBrewer)
+library(rgdal)
 
-# make uic halsted data
-uic_entries <- read.table(file = 'CTA.tsv', sep = '\t', header = TRUE)
-uic_entries <- uic_entries[uic_entries$station_id == 40350,]
-uic_entries <- separate(uic_entries, date, c("Month", "Day", "Year"))
+# READ ALL FILES FROM DIRECTORY
+temp = list.files(pattern="*.tsv")
+allData2 <- lapply(temp, read.delim)
+allData <- do.call(rbind, allData2)
 
-# make ohare data
-ohare_entries <- read.table(file = 'CTA.tsv', sep = '\t', header = TRUE)
-ohare_entries <- ohare_entries[ohare_entries$station_id == 40890,]
-ohare_entries <- separate(ohare_entries, date, c("Month", "Day", "Year"))
+# Location
+locData <- read_tsv('locationData/locationData.tsv')
+names(locData)[names(locData) == 'STATION_NAME'] <- "stationname"
+names(locData)[names(locData) == 'Location'] <- "location"
+locData <- locData[!duplicated(locData$stationname), ] 
+allNedeedData <- left_join(allData, locData, by = c("stationname"))
 
-# make indiana data
-indiana_entries <- read.table(file = 'CTA.tsv', sep = '\t', header = TRUE)
-indiana_entries <- indiana_entries[indiana_entries$station_id == 40300,]
-indiana_entries <- separate(indiana_entries, date, c("Month", "Day", "Year"))
+# extra locations
+extraLocData <- read_tsv('locationData/extraLocations.tsv')
+# one more join 
+allNedeedData <- left_join(allNedeedData, extraLocData, by = c("stationname"))
+allNedeedData <- allNedeedData %>% select(-STOP_ID)
+allNedeedData <- allNedeedData %>% select(-DIRECTION_ID)
+allNedeedData <- allNedeedData %>% select(-STOP_NAME)
+allNedeedData <- allNedeedData %>% select(-STATION_DESCRIPTIVE_NAME)
+allNedeedData <- allNedeedData %>% select(-MAP_ID)
+allNedeedData <- allNedeedData %>% select(-ADA)
+allNedeedData <- allNedeedData %>% select(-RED)
+allNedeedData <- allNedeedData %>% select(-BLUE)
+allNedeedData <- allNedeedData %>% select(-G)
+allNedeedData <- allNedeedData %>% select(-BRN)
+allNedeedData <- allNedeedData %>% select(-P)
+allNedeedData <- allNedeedData %>% select(-Pexp)
+allNedeedData <- allNedeedData %>% select(-Y)
+allNedeedData <- allNedeedData %>% select(-Pnk)
+allNedeedData <- allNedeedData %>% select(-O)
 
-# make date numeric
-uic_entries$Year <- as.numeric(as.character(uic_entries$Year))
-uic_entries$Month <- as.numeric(as.character(uic_entries$Month))
-uic_entries$Day <- as.numeric(as.character(uic_entries$Day))
+# Merge Locations
+allNedeedData$location <- paste(allNedeedData$location.y,allNedeedData$location.x)
 
-uic_entries$date <- ymd(paste(uic_entries$Year, uic_entries$Month, uic_entries$Day, sep="-"))
-uic_entries$each_day <- format(uic_entries$date, '%b %d')
-uic_entries$weekday <- weekdays(as.Date(uic_entries$date))
-uic_entries$months <- format(uic_entries$date, '%B')
+# Remove NAs and create new 
+locationsWithoutNAs <- allNedeedData %>% mutate(location = coalesce(location.x,location.y)) %>% select(, location)
 
-yearly_sums <- aggregate(x = uic_entries$rides, by = list(uic_entries$Year), FUN = sum) 
+# remove col names
+allNedeedData <- allNedeedData %>% select(-location.x)
+allNedeedData <- allNedeedData %>% select(-location.y)
+allNedeedData <- allNedeedData %>% select(-location)
 
-# make date numeric
-ohare_entries$Year <- as.numeric(as.character(ohare_entries$Year))
-ohare_entries$Month <- as.numeric(as.character(ohare_entries$Month))
-ohare_entries$Day <- as.numeric(as.character(ohare_entries$Day))
+# rename location.location
+locationsWithoutNAs <- pull(locationsWithoutNAs, location)
+allNedeedData$location <- locationsWithoutNAs
 
-ohare_entries$date <- ymd(paste(ohare_entries$Year, ohare_entries$Month, ohare_entries$Day, sep="-"))
-ohare_entries$each_day <- format(ohare_entries$date, '%b %d')
-ohare_entries$weekday <- weekdays(as.Date(ohare_entries$date))
-ohare_entries$months <- format(ohare_entries$date, '%B')
+# remove all ( and ) first
+allNedeedData$location<-sub('.', '', as.character(allNedeedData$location))
+allNedeedData$location<-substr(as.character(allNedeedData$location), 1, nchar(as.character(allNedeedData$location))-2)
 
-yearly_sums_o <- aggregate(x = ohare_entries$rides, by = list(ohare_entries$Year), FUN = sum) 
+# separated
+separated <- data.frame(do.call("rbind", strsplit(as.character(allNedeedData$location), ",", fixed = TRUE)))
+separated$X1 <- as.numeric(as.character(separated$X1))
+separated$X2 <- as.numeric(as.character(separated$X2))
 
-# make date numeric
-indiana_entries$Year <- as.numeric(as.character(indiana_entries$Year))
-indiana_entries$Month <- as.numeric(as.character(indiana_entries$Month))
-indiana_entries$Day <- as.numeric(as.character(indiana_entries$Day))
+# join
+allNedeedData$lat <- separated$X1
+allNedeedData$long <- separated$X2
 
-indiana_entries$date <- ymd(paste(indiana_entries$Year, indiana_entries$Month, indiana_entries$Day, sep="-"))
-indiana_entries$each_day <- format(indiana_entries$date, '%b %d')
-indiana_entries$weekday <- weekdays(as.Date(indiana_entries$date))
-indiana_entries$months <- format(indiana_entries$date, '%B')
+# CONVERT DATES
+allNedeedData$newDate <- as.Date(allNedeedData$date, "%m/%d/%Y")
+allNedeedData$date <- NULL
 
-yearly_sums_i <- aggregate(x = indiana_entries$rides, by = list(indiana_entries$Year), FUN = sum) 
-
-# create menu items
-years<-c(2001:2021)
+# MENU ITEMS
+stationNamesFalse <- c(allNedeedData$stationname)
+stationNames <- sort(unique(stationNamesFalse))
+mapThemes <- c("Basic", "Topo Map", "Grey")
 
 
-# Define UI for application
+# UI START
 ui <- dashboardPage(
-  dashboardHeader(title = "CTA data"),
+  dashboardHeader(title = "CTA stations data"),
   dashboardSidebar(disable = FALSE, collapsed = FALSE,
-    sidebarMenu(
-      menuItem("Graphs", tabName = "Graphs", icon = NULL),
-      menuItem("Tables", tabName = "Tables", icon = NULL),
-      menuItem("About Page", tabName = "About", icon = NULL),
-      menuItem("", tabName = "cheapBlankSpace", icon = NULL)
-    ),
-    
-    selectInput("Year", "Select the year to visualize UIC Halsted", years, selected = 2021),
-    selectInput("Year_o", "Select the year to visualize O'Hare", years, selected = 2021),
-    selectInput("Year_i", "Select the year to visualize Indiana", years, selected = 2021)
-    
+                   sidebarMenu(
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL)),
+                  
+                   dateInput("date1", label = "Select date", value = "08/23/21"),
+                   # dateInput("date2", label = "Select date to compare", value = "08/23/21"),
+                   
+                   sidebarMenu(
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL)),
+                   
+                   selectInput("Station1", "Select first station", stationNames, selected = 'UIC-Halsted'),
+                   selectInput("Station2", "Select second station", stationNames, selected = "O'Hare Airport"),
+
+
+                   sidebarMenu(
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL)),
+                   
+                   selectInput("mapTheme", "Select Map Theme", mapThemes, selected = 'Basic'),
+                   
+                   sidebarMenu(
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("Dashboard", tabName = "Dashboard", icon = NULL),
+                     menuItem("About Page", tabName = "About", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL),
+                     menuItem("", tabName = "cheapBlankSpace", icon = NULL))
   ),
   dashboardBody(
     tabItems(
-      tabItem(tabName = "Graphs",
+      tabItem(tabName = "Dashboard",
               fluidRow(
-                # uic
-                column(4, box(
-                  width = '100%',
-                  title = "UIC Halsted station load in years", 
-                  solidHeader = TRUE, 
-                  status = "primary",
-                  plotOutput("bar1", height = 200)
-                )
+                column(8,
+                       fluidRow(
+                         column(6, box(
+                           title = "Total entries for all stations on selected day",
+                           solidHeader = TRUE, status = "info", width = 12,
+                           plotOutput("totalBar", height = 400)
+                         )),
+                         column(6, box(
+                           title = "Table for total entries for all stations on selected day",
+                           solidHeader = TRUE, status = "info", width = 12,
+                           dataTableOutput("totalTable", height = 400)
+                         ))
+                       ),
+                       fluidRow(
+                         column(2, box(
+                           title = "Table for rides per day for the first station",
+                           solidHeader = TRUE, status = "primary", width = 12,
+                           dataTableOutput("dayTable1", height = 400)
+                         )),
+                         column(4, box(
+                           title = "Rides per day for the first station",
+                           solidHeader = TRUE, status = "primary", width = 12,
+                           plotOutput("dayBar1", height = 400)
+                         )),
+                         column(4, box(
+                           title = "Rides per day for the second station",
+                           solidHeader = TRUE, status = "primary", width = 12,
+                           plotOutput("dayBar2", height = 400)
+                         )),
+                         column(2, box(
+                           title = "Table for rides per day for the second station",
+                           solidHeader = TRUE, status = "primary", width = 12,
+                           dataTableOutput("dayTable2", height = 400)
+                         ))
+                       ),
+                       fluidRow(
+                         column(2, box(
+                           title = "Table for rides per day of the week for the first station",
+                           solidHeader = TRUE, status = "primary", width = 12,
+                           dataTableOutput("weekTable1", height = 400)
+                         )),
+                         column(4, box(
+                           title = "Rides per day of the week for the first station",
+                           solidHeader = TRUE, status = "primary", width = 12,
+                           plotOutput("weekBar1", height = 400)
+                         )),
+                         column(4, box(
+                           title = "Rides per day of the week the for the second station",
+                           solidHeader = TRUE, status = "primary", width = 12,
+                           plotOutput("weekBar2", height = 400)
+                         )),
+                         column(2, box(
+                           title = "Table for rides per day of the week the for the second station",
+                           solidHeader = TRUE, status = "primary", width = 12,
+                           dataTableOutput("weekTable2", height = 400)
+                         ))
+                       ),
+                       fluidRow(
+                         column(2, box(
+                           title = "Table for rides per month for the first station",
+                           solidHeader = TRUE, status = "primary", width = 12,
+                           dataTableOutput("monthTable1", height = 400)
+                         )),
+                         column(4, box(
+                           title = "Rides per month for the first station",
+                           solidHeader = TRUE, status = "primary", width = 12,
+                           plotOutput("monthBar1", height = 400)
+                         )),
+                         column(4, box(
+                           title = "Rides per month for the second station",
+                           solidHeader = TRUE, status = "primary", width = 12,
+                           plotOutput("monthBar2", height = 400)
+                         )),
+                         column(2, box(
+                           title = "Table for rides per month for the second station",
+                           solidHeader = TRUE, status = "primary", width = 12,
+                           dataTableOutput("monthTable2", height = 400)
+                         ))
+                       ),
+                       fluidRow(
+                         column(2, box(
+                           title = "Table for rides per year for the first station",
+                           solidHeader = TRUE, status = "primary", width = 12,
+                           dataTableOutput("yearTable1", height = 400)
+                         )),
+                         column(4, box(
+                           title = "Rides per year for the first station",
+                           solidHeader = TRUE, status = "primary", width = 12,
+                           plotOutput("yearBar1", height = 400)
+                         )),
+                         column(4, box(
+                           title = "Rides per year for the second station",
+                           solidHeader = TRUE, status = "primary", width = 12,
+                           plotOutput("yearBar2", height = 400)
+                         )),
+                         column(2, box(
+                           title = "Table for rides per year for the second station",
+                           solidHeader = TRUE, status = "primary", width = 12,
+                           dataTableOutput("yearTable2", height = 400)
+                         ))
+                       ),
+                       
                 ),
-                #ohare
+                column(4, box(
+                  title = "Map with all CTA stations", 
+                  solidHeader = TRUE, status = "info", width = 12,
+                  leafletOutput("map", height = 2335),
+                  absolutePanel(bottom = 30, left = 10)
+                ))
+              ) #end of fluid row
+              
+      ),
+      tabItem(tabName = "About",
+              fluidRow(
+                column(8, box(
+                  width = '100%',
+                  title = "Where the data was taken",
+                  solidHeader = TRUE, 
+                  status = "info",
+                  p("The data was taken from the Chicago Data Portal at: "),
+                  a("https://data.cityofchicago.org/Transportation/CTA-Ridership-L-Station-Entries-Daily-Totals/5neh-572f"),
+                  p("and was exported in the TSV for Excel version. Data contains 1.09M or rows and 5 columns. Columns include: station_id, stationname, date, daytype and number of rides"),
+                  p("The additional data for maps was taken from "),
+                  a("https://data.cityofchicago.org/Transportation/CTA-System-Information-List-of-L-Stops/8pix-ypme"),
+                  p("It has a list of 'L' stops provides location and basic service availability information for each place on the CTA system where a train stops, along with formal station names and stop descriptions."),
+                  p("The data was updated on Updated October 19, 2021, andd has 300 rows and 17 columns")
+                )),
                 column(4, box(
                   width = '100%',
-                  title = "O'Hare station load in years", 
+                  title = "Who wrote the app",
                   solidHeader = TRUE, 
-                  status = "primary",
-                  plotOutput("bar1_o", height = 200)
-                )
-                ),
-                column(4, box(
-                  width = '100%',
-                  title = "Indiana station load in years", 
-                  solidHeader = TRUE, 
-                  status = "primary",
-                  plotOutput("bar1_i", height = 200)
-                )
-                )
-                
+                  status = "info",
+                  p("The creator of this app is Malika Yelyubayeva and Mykyta Porivyi. We are Computer Science undergraduate students at the University of Illinois at Chicago. This app was created for the Project 2 of CS424 class 'Data visualization'")
+                ))
               ),
               
               fluidRow(
-                # uic
-                column(4, box(
+                column(12, box(
                   width = '100%',
-                  title = "UIC Halsted station load in each month", 
+                  title = "Why this app exists",
                   solidHeader = TRUE, 
-                  status = "primary",
-                  plotOutput("bar3", height = 200)
-                )
-                ),
-                # ohare
-                column(4, box(
-                  width = '100%',
-                  title = "O'Hare station load in each month", 
-                  solidHeader = TRUE, 
-                  status = "primary",
-                  plotOutput("bar3_o", height = 200)
-                )
-                ),
-                column(4, box(
-                  width = '100%',
-                  title = "Indiana station load in each month", 
-                  solidHeader = TRUE, 
-                  status = "primary",
-                  plotOutput("bar3_i", height = 200)
-                )
-                )
-                
-              ),
-              
-              fluidRow(
-                column(4, box(
-                  width = '100%',
-                  title = "UIC Halsted station load in each day of the week", 
-                  solidHeader = TRUE, 
-                  status = "primary",
-                  plotOutput("bar4", height = 200)
-                )
-                ),
-                column(4, box(
-                  width = '100%',
-                  title = "O'Hare station load in each day of the week", 
-                  solidHeader = TRUE, 
-                  status = "primary",
-                  plotOutput("bar4_o", height = 200)
-                )
-                ),
-                column(4, box(
-                  width = '100%',
-                  title = "Indiana station load in each day of the week", 
-                  solidHeader = TRUE, 
-                  status = "primary",
-                  plotOutput("bar4_i", height = 200)
-                )
-                )
-              ),
-              
-              fluidRow(
-                column(4, box(
-                  width = '100%',
-                  title = "UIC Halsted station load each day", 
-                  solidHeader = TRUE, 
-                  status = "primary",
-                  plotOutput("bar2", height = 1500)
-                )
-                ),
-                column(4, box(
-                  width = '100%',
-                  title = "O'Hare station load each day", 
-                  solidHeader = TRUE, 
-                  status = "primary",
-                  plotOutput("bar2_o", height = 1500)
-                )
-                ),
-                column(4, box(
-                  width = '100%',
-                  title = "Indiana station load in each day of the week", 
-                  solidHeader = TRUE, 
-                  status = "primary",
-                  plotOutput("bar2_i", height = 1500)
-                )
-                )
+                  status = "info",
+                  p('This app exists to visually see and analyze the data about CTA stations, their load depending on the time of the year or week or even day'),
+                  p("In addition to that this app can be used for people who are commuting to campus/work using CTA services. This map would be useful for people who want to avoid traffic by looking at the map's specific featurer of showing the most loaded stations on a specific day"),
+                  p("It is known that the patterns of using the CTA stations usually stay the same, so it is possible to predict the load of the specific station by looking at the older data")
+                ))
               )
-              
-      ),
-      
-      tabItem( tabName = "Tables",
-               fluidRow(
-                 column(4, box(
-                   width = '100%',
-                   title = "UIC Halsted station load in years", 
-                   solidHeader = TRUE, 
-                   status = "primary",
-                   dataTableOutput("tab1", height = 200)
-                 )
-                 ),
-                 column(4, box(
-                   width = '100%',
-                   title = "O'Hare station load in years", 
-                   solidHeader = TRUE, 
-                   status = "primary",
-                   dataTableOutput("tab1_o", height = 200)
-                 )
-                 ),
-                 column(4, box(
-                   width = '100%',
-                   title = "Indiana station load in years", 
-                   solidHeader = TRUE, 
-                   status = "primary",
-                   dataTableOutput("tab1_i", height = 200)
-                 )
-                 )
-                 
-               ),
-               
-               fluidRow(
-                 column(4, box(
-                   width = '100%',
-                   title = "UIC Halsted station load in each month", 
-                   solidHeader = TRUE, 
-                   status = "primary",
-                   dataTableOutput("tab2", height = 200)
-                 )
-                 ),
-                 column(4, box(
-                   width = '100%',
-                   title = "O'Hare station load in each month", 
-                   solidHeader = TRUE, 
-                   status = "primary",
-                   dataTableOutput("tab2_o", height = 200)
-                 )
-                 ),
-                 column(4, box(
-                   width = '100%',
-                   title = "Indiana station load in each month", 
-                   solidHeader = TRUE, 
-                   status = "primary",
-                   dataTableOutput("tab2_i", height = 200)
-                 )
-                 )
-                 
-               ),
-               
-               fluidRow(
-                 column(4, box(
-                   width = '100%',
-                   title = "UIC Halsted station load in each day of the week", 
-                   solidHeader = TRUE, 
-                   status = "primary",
-                   dataTableOutput("tab3", height = 200)
-                 )
-                 ),
-                 column(4, box(
-                   width = '100%',
-                   title = "O'Hare station load in each day of the week", 
-                   solidHeader = TRUE, 
-                   status = "primary",
-                   dataTableOutput("tab3_o", height = 200)
-                 )
-                 ),
-                 column(4, box(
-                   width = '100%',
-                   title = "Indiana station load in each day of the week", 
-                   solidHeader = TRUE, 
-                   status = "primary",
-                   dataTableOutput("tab3_i", height = 200)
-                 )
-                 )
-               ),
-               
-               fluidRow(
-                 column(4, box(
-                   width = '100%',
-                   title = "UIC Halsted station load each day", 
-                   solidHeader = TRUE, 
-                   status = "primary",
-                   dataTableOutput("tab4", height = 200)
-                 )
-                 ),
-                 column(4, box(
-                   width = '100%',
-                   title = "O'Hare station load each day", 
-                   solidHeader = TRUE, 
-                   status = "primary",
-                   dataTableOutput("tab4_o", height = 200)
-                 )
-                 ),
-                 column(4, box(
-                   width = '100%',
-                   title = "Indiana station load each day", 
-                   solidHeader = TRUE, 
-                   status = "primary",
-                   dataTableOutput("tab4_i", height = 200)
-                 )
-                 )
-               )
-               
-      ),
-      tabItem( tabName = "About", 
-               fluidRow(
-                 column(8, box(
-                   width = '100%',
-                   title = "Where the data was taken",
-                   solidHeader = TRUE, 
-                   status = "primary",
-                   p("The data was taken from the Chicago Data Portal at: "),
-                   a("https://data.cityofchicago.org/Transportation/CTA-Ridership-L-Station-Entries-Daily-Totals/5neh-572f"),
-                   p("and was exported in the TSV for Excel version. Data contains 1.09M or rows and 5 columns. Columns include: station_id, stationname, date, daytype and number of rides")
-                 )),
-                 column(4, box(
-                   width = '100%',
-                   title = "Who wrote the app",
-                   solidHeader = TRUE, 
-                   status = "primary",
-                   p("The creator of this app is Malika Yelyubayeva. A Computer Science student at the University of Illinois at Chicago who is graduating this May.")
-                 ))
-               ),
-               
-               fluidRow(
-                 column(12, box(
-                   width = '100%',
-                   title = "Why this app exists",
-                   solidHeader = TRUE, 
-                   status = "primary",
-                   p('This app exists to visually see and analyze the data about CTA stations, their load depending on the time of the year or week or even day')
-                 ))
-               )
       )
     )
-  ) #dashboardBody end
-) #dashboardPage end
+    
+    
+    
+  ) #end of dashboard body
+) #end of ui
 
-# Define server logic
+# Define server logic required to draw a histogram
 server <- function(input, output) {
-  theme_set(theme_grey(base_size = 14)) 
+  theme_set(theme_grey(base_size = 14))
   
-  justOneYearReactive <- reactive({subset(uic_entries, year(uic_entries$date) == input$Year)})
-  justOneYearReactive_o <- reactive({subset(ohare_entries, year(ohare_entries$date) == input$Year_o)})
-  justOneYearReactive_i <- reactive({subset(indiana_entries, year(indiana_entries$date) == input$Year_i)})
+  # calculate the values one time and re-use them in multiple charts to speed things up
+  justOneDayReactive <- reactive({subset(allNedeedData, date(allNedeedData$newDate) == date(input$date1))})
   
-  # show a bar chart of the rides all years in UIC Halsted
-  output$bar1 <- renderPlot({
-    ggplot(uic_entries, aes(x=Year, y=rides)) + 
-      geom_bar(stat="identity", width=0.5, fill="steelblue") +
-      labs(x="Year", y = "Rides")  +
-      scale_x_continuous(breaks=years, labels = years) +
-      theme_minimal() +
-      theme(axis.title.y = element_text(face = "italic"))
-  })
+  # each day in year
+  justOneYearReactiveFirst <- reactive({subset(allNedeedData, year(allNedeedData$newDate) == format(as.Date(input$date1, format="%m/%d/%Y"),"%Y") & allNedeedData$stationname == input$Station1)})
+  justOneYearReactiveSecond <- reactive({subset(allNedeedData, year(allNedeedData$newDate) == format(as.Date(input$date1, format="%m/%d/%Y"),"%Y") & allNedeedData$stationname == input$Station2)})
   
-  # show a bar chart of the rides all years in OHARE
-  output$bar1_o <- renderPlot({
-    ggplot(ohare_entries, aes(x=Year, y=rides)) + 
-      geom_bar(stat="identity", width=0.5, fill="steelblue") +
-      labs(x="Year", y = "Rides")  +
-      scale_x_continuous(breaks=years, labels = years) +
-      theme_minimal() +
-      theme(axis.title.y = element_text(face = "italic"))
-  })
+  # each weekday in year
+  justOneWeekReactiveFirst <- reactive({subset(allNedeedData, year(allNedeedData$newDate) == format(as.Date(input$date1, format="%m/%d/%Y"),"%Y") & allNedeedData$stationname == input$Station1)})
   
-  # show a bar chart of the rides all years in OHARE
-  output$bar1_i <- renderPlot({
-    ggplot(indiana_entries, aes(x=Year, y=rides)) + 
-      geom_bar(stat="identity", width=0.5, fill="steelblue") +
-      labs(x="Year", y = "Rides")  +
-      scale_x_continuous(breaks=years, labels = years) +
-      theme_minimal() +
-      theme(axis.title.y = element_text(face = "italic"))
-  })
+  #each month in year
+  justOneMonthReactiveFirst <- reactive({subset(allNedeedData, format(as.Date(allNedeedData$newDate, format="%m/%d/%Y"),"%d%Y") == format(as.Date(input$date1, format="%m/%d/%Y"),"%m%Y") & allNedeedData$stationname == input$Station1)})
+  justOneMonthReactiveSecond <- reactive({subset(allNedeedData, format(as.Date(allNedeedData$newDate, format="%m/%d/%Y"),"%d%Y") == format(as.Date(input$date1, format="%m/%d/%Y"),"%m%Y") & allNedeedData$stationname == input$Station2)})
   
-  # bar chart showing entries at UIC-Halsted each day (jan 1, jan 2, ... dec 31)
-  output$bar2 <- renderPlot({
-    justOneYear <- justOneYearReactive()
-    ggplot(justOneYear, aes(x=each_day, y=rides)) + 
-      geom_bar(stat="identity",width=0.5, fill="steelblue") +
-      labs(x=paste("Days in", input$Year), y = "Rides") +
-      coord_flip() +
-      theme_minimal() +
-      theme(axis.title.y = element_text(face = "italic"))
-  })
-  
-  # bar chart showing entries at ohare each day (jan 1, jan 2, ... dec 31)
-  output$bar2_o <- renderPlot({
-    justOneYear <- justOneYearReactive_o()
-    ggplot(justOneYear, aes(x=each_day, y=rides)) + 
-      geom_bar(stat="identity",width=0.5, fill="steelblue") +
-      labs(x=paste("Days in", input$Year_o), y = "Rides") +
-      coord_flip() +
-      theme_minimal() +
-      theme(axis.title.y = element_text(face = "italic"))
-  })
-  
-  # bar chart showing entries at ohare each day (jan 1, jan 2, ... dec 31)
-  output$bar2_i <- renderPlot({
-    justOneYear <- justOneYearReactive_i()
-    ggplot(justOneYear, aes(x=each_day, y=rides)) + 
-      geom_bar(stat="identity",width=0.5, fill="steelblue") +
-      labs(x=paste("Days in", input$Year_i), y = "Rides") +
-      coord_flip() +
-      theme_minimal() +
-      theme(axis.title.y = element_text(face = "italic"))
-  })
-  
-  # bar chart showing total entries at UIC-Halsted for each month (jan, feb, ... dec)
-  output$bar3 <- renderPlot({
-    justOneYear <- justOneYearReactive()
-    justOneYear$months <- factor(justOneYear$months, levels= c("December", "November", "October", "September", "August", "July", "June", 
-                                                                 "May", "April", "March", "February", "January"))
-    ggplot(justOneYear, aes(x=months, y=rides)) +
-      geom_bar(stat="identity",width=0.5, fill="steelblue") +
-      labs(x=paste("Months in", input$Year), y = "Rides")  +
-      ylim(0, max(justOneYear$rides) + 1000) +
-      coord_flip()+
-      theme_minimal() +
-      theme(axis.title.y = element_text(face = "italic"))
-  })
-  
-  # bar chart showing total entries at ohare for each month (jan, feb, ... dec)
-  output$bar3_o <- renderPlot({
-    justOneYear <- justOneYearReactive_o()
-    justOneYear$months <- factor(justOneYear$months, levels= c("December", "November", "October", "September", "August", "July", "June", 
-                                                               "May", "April", "March", "February", "January"))
-    ggplot(justOneYear, aes(x=months, y=rides)) +
-      geom_bar(stat="identity",width=0.5, fill="steelblue") +
-      labs(x=paste("Months in", input$Year_o), y = "Rides")  +
-      ylim(0, max(justOneYear$rides) + 1000) +
-      coord_flip()+
-      theme_minimal() +
-      theme(axis.title.y = element_text(face = "italic"))
-  })
-  
-  # bar chart showing total entries at ohare for each month (jan, feb, ... dec)
-  output$bar3_i <- renderPlot({
-    justOneYear <- justOneYearReactive_i()
-    justOneYear$months <- factor(justOneYear$months, levels= c("December", "November", "October", "September", "August", "July", "June", 
-                                                               "May", "April", "March", "February", "January"))
-    ggplot(justOneYear, aes(x=months, y=rides)) +
-      geom_bar(stat="identity",width=0.5, fill="steelblue") +
-      labs(x=paste("Months in", input$Year_i), y = "Rides")  +
-      ylim(0, max(justOneYear$rides) + 1000) +
-      coord_flip()+
-      theme_minimal() +
-      theme(axis.title.y = element_text(face = "italic"))
-  })
-  
-  # bar chart showing total entries at UIC-Halsted for each day of the week (mon, tue, ... sun)
-  output$bar4 <- renderPlot({
-    justOneYear <- justOneYearReactive()
-    justOneYear$weekday <- factor(justOneYear$weekday, levels= c("Sunday", "Saturday", 
-                                          "Friday", "Thursday", "Wednesday", "Tuesday", "Monday"))
-    ggplot(justOneYear, aes(x=weekday, y=rides)) +
-      geom_bar(stat="identity",width=0.5, fill="steelblue") +
-      labs(x=paste("Weekdays in", input$Year), y = "Rides")  +
-      coord_flip()+
-      theme_minimal() +
-      theme(axis.title.y = element_text(face = "italic"))
-  })
-  
-  # bar chart showing total entries at ohare for each day of the week (mon, tue, ... sun)
-  output$bar4_o <- renderPlot({
-    justOneYear <- justOneYearReactive_o()
-    justOneYear$weekday <- factor(justOneYear$weekday, levels= c("Sunday", "Saturday", 
-                                                                 "Friday", "Thursday", "Wednesday", "Tuesday", "Monday"))
-    ggplot(justOneYear, aes(x=weekday, y=rides)) +
-      geom_bar(stat="identity",width=0.5, fill="steelblue") +
-      labs(x=paste("Weekdays in", input$Year_o), y = "Rides")  +
-      coord_flip()+
-      theme_minimal() +
-      theme(axis.title.y = element_text(face = "italic"))
-  })
-  
-  # bar chart showing total entries at ohare for each day of the week (mon, tue, ... sun)
-  output$bar4_i <- renderPlot({
-    justOneYear <- justOneYearReactive_i()
-    justOneYear$weekday <- factor(justOneYear$weekday, levels= c("Sunday", "Saturday", 
-                                                                 "Friday", "Thursday", "Wednesday", "Tuesday", "Monday"))
-    ggplot(justOneYear, aes(x=weekday, y=rides)) +
-      geom_bar(stat="identity",width=0.5, fill="steelblue") +
-      labs(x=paste("Weekdays in", input$Year_i), y = "Rides")  +
-      coord_flip()+
-      theme_minimal() +
-      theme(axis.title.y = element_text(face = "italic"))
-  })
-  
-  
-  # show a table of the rides all years in UIC Halsted
-  output$tab1 <- DT::renderDataTable({
-    datatable(yearly_sums,
-              colnames = c('Year', 'Total Rides'), 
-              options = list(pageLength = 12, autoWidth = TRUE))})
-  
-  # show a table of the rides all years in OHARE
-  output$tab1_o <- DT::renderDataTable({
-    datatable(yearly_sums_o,
-              colnames = c('Year', 'Total Rides'), 
-              options = list(pageLength = 12, autoWidth = TRUE))})  
-  
-  # show a table of the rides all years in OHARE
-  output$tab1_i <- DT::renderDataTable({
-    datatable(yearly_sums_i,
-              colnames = c('Year', 'Total Rides'), 
-              options = list(pageLength = 12, autoWidth = TRUE))})  
-  
-  
-  # UIC Halsted station load in each month
-  output$tab2 <- DT::renderDataTable({
-    justOneYear <- justOneYearReactive()
-    monthly_sums <- uic_entries[uic_entries$Year == justOneYear,]
-    monthly_sums <- aggregate(x = monthly_sums$rides, by = list(monthly_sums$Month), FUN = sum)
-    datatable(monthly_sums,
-              colnames = c('Month', 'Total Rides'),
-              options = list(searching = FALSE, pageLength = 12, lengthChange = FALSE, order = list(list(1, 'desc'))
-  ), rownames = FALSE )})
-  
-  # OHARE station load in each month
-  output$tab2_o <- DT::renderDataTable({
-    justOneYear <- justOneYearReactive_o()
-    monthly_sums <- ohare_entries[ohare_entries$Year == justOneYear,]
-    monthly_sums <- aggregate(x = monthly_sums$rides, by = list(monthly_sums$Month), FUN = sum)
-    datatable(monthly_sums,
-              colnames = c('Month', 'Total Rides'),
-              options = list(searching = FALSE, pageLength = 12, lengthChange = FALSE, order = list(list(1, 'desc'))
-              ), rownames = FALSE )})
-  
-  # OHARE station load in each month
-  output$tab2_i <- DT::renderDataTable({
-    justOneYear <- justOneYearReactive_i()
-    monthly_sums <- indiana_entries[indiana_entries$Year == justOneYear,]
-    monthly_sums <- aggregate(x = monthly_sums$rides, by = list(monthly_sums$Month), FUN = sum)
-    datatable(monthly_sums,
-              colnames = c('Month', 'Total Rides'),
-              options = list(searching = FALSE, pageLength = 12, lengthChange = FALSE, order = list(list(1, 'desc'))
-              ), rownames = FALSE )})
-  
-  # UIC Halsted station load in each weekday
-  output$tab3 <- DT::renderDataTable({
-    justOneYear <- justOneYearReactive()
-    weekly_sums <- uic_entries[uic_entries$Year == justOneYear,]
-    weekly_sums <- aggregate(x = weekly_sums$rides, by = list(weekly_sums$weekday), FUN = sum)
-    datatable(weekly_sums,
-              colnames = c('Weekday', 'Total Rides'),
-              options = list(pageLength = 7, autoWidth = TRUE))})
-
-  # OHARE station load in each weekday
-  output$tab3_o <- DT::renderDataTable({
-    justOneYear <- justOneYearReactive_o()
-    weekly_sums <- ohare_entries[ohare_entries$Year == justOneYear,]
-    weekly_sums <- aggregate(x = weekly_sums$rides, by = list(weekly_sums$weekday), FUN = sum)
-    datatable(weekly_sums,
-              colnames = c('Weekday', 'Total Rides'),
-              options = list(pageLength = 7, autoWidth = TRUE))})
-  
-  # OHARE station load in each weekday
-  output$tab3_i <- DT::renderDataTable({
-    justOneYear <- justOneYearReactive_i()
-    weekly_sums <- indiana_entries[indiana_entries$Year == justOneYear,]
-    weekly_sums <- aggregate(x = weekly_sums$rides, by = list(weekly_sums$weekday), FUN = sum)
-    datatable(weekly_sums,
-              colnames = c('Weekday', 'Total Rides'),
-              options = list(pageLength = 7, autoWidth = TRUE))})
+  #each year
+  justOneStationReactiveFirst <- reactive({subset(allNedeedData, allNedeedData$stationname == input$Station1)})
+  justOneStationReactiveSecond <- reactive({subset(allNedeedData, allNedeedData$stationname == input$Station2)})
   
 
-  # UIC Halsted station load in each day
-  output$tab4 <- DT::renderDataTable({
-    justOneYear <- justOneYearReactive()
-    daily_sums <- uic_entries[uic_entries$Year == justOneYear,]
-    daily_sums <- aggregate(x = daily_sums$rides, by = list(daily_sums$each_day), FUN = sum)
-    datatable(daily_sums,
+  # -- 1 ROW-- 
+  # show a bar chart and table of all station rides in a specific day and year
+  output$totalBar <- renderPlot({
+    totalDay <- justOneDayReactive()
+    ggplot(totalDay, aes(x=stationname, y=rides)) + 
+      geom_bar(stat="identity", fill="lightskyblue1") +
+      labs(x="Stations", y = "Rides")+
+      theme_minimal()
+      # scale_fill_continuous(limits = c(0, max(allNedeedData$rides)))
+  })
+
+  output$totalTable <- DT::renderDataTable({
+    v <- justOneDayReactive()
+    datatable(v[c("stationname","rides")], 
+              colnames = c('Station name', 'Total Rides'),
+              options = list(pageLength = 8, searching = FALSE, lengthChange = FALSE, order = list(list(1, 'desc'))), 
+              rownames = FALSE
+    )
+  })
+  
+  # -- 2  ROW--
+  # show a bar chart and table of one station rides in days in spec year
+  output$dayBar1 <- renderPlot({
+    justOneYearFirst <- justOneYearReactiveFirst()
+    ggplot(justOneYearFirst, aes(x=newDate, y=rides)) +
+      geom_bar(stat="identity", fill="cadetblue3") +
+      labs(x=paste("Days in", format(as.Date(input$date1, format="%m/%d/%Y"),"%Y")), y = "Rides")+
+      theme_minimal()
+  })
+  
+  output$dayTable1 <- DT::renderDataTable({
+    v <- justOneYearReactiveFirst()
+    datatable(v[c("newDate","rides")], 
               colnames = c('Day', 'Total Rides'),
-              options = list(pageLength = 10, autoWidth = TRUE))})
+              options = list(pageLength = 8, searching = FALSE, lengthChange = FALSE, order = list(list(1, 'desc'))), 
+              rownames = FALSE
+    )
+  })
+
+  output$dayBar2 <- renderPlot({
+    justOneYearSecond <- justOneYearReactiveSecond()
+    ggplot(justOneYearSecond, aes(x=newDate, y=rides)) +
+      geom_bar(stat="identity", fill="darkslategray4") +
+      labs(x=paste("Days in", format(as.Date(input$date1, format="%m/%d/%Y"),"%Y")), y = "Rides")+
+      theme_minimal()
+  })
   
-  # OHARE station load in each day
-  output$tab4_o <- DT::renderDataTable({
-    justOneYear <- justOneYearReactive_o()
-    daily_sums <- ohare_entries[ohare_entries$Year == justOneYear,]
-    daily_sums <- aggregate(x = daily_sums$rides, by = list(daily_sums$each_day), FUN = sum)
-    datatable(daily_sums,
+  output$dayTable2 <- DT::renderDataTable({
+    v <- justOneYearReactiveSecond()
+    datatable(v[c("newDate","rides")], 
               colnames = c('Day', 'Total Rides'),
-              options = list(pageLength = 10, autoWidth = TRUE))})
+              options = list(pageLength = 8, searching = FALSE, lengthChange = FALSE, order = list(list(1, 'desc'))),  
+              rownames = FALSE
+    )
+  })
   
-  # OHARE station load in each day
-  output$tab4_i <- DT::renderDataTable({
-    justOneYear <- justOneYearReactive_i()
-    daily_sums <- indiana_entries[indiana_entries$Year == justOneYear,]
-    daily_sums <- aggregate(x = daily_sums$rides, by = list(daily_sums$each_day), FUN = sum)
-    datatable(daily_sums,
-              colnames = c('Day', 'Total Rides'),
-              options = list(pageLength = 10, autoWidth = TRUE))})
+  # -- 3  ROW--
+  # show a bar chart and table of one station rides in days in spec day of the week
+  output$weekBar1 <- renderPlot({
+    justOneYearFirst <- justOneYearReactiveFirst()
+    data <- aggregate(x = justOneYearFirst$rides, by = list(weekdays(as.Date(justOneYearFirst$newDate))), FUN = sum)
+    data$Group.1 <- factor(data$Group.1, levels= c("Monday", "Tuesday", 
+                                                          "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+    ggplot(data, aes(x=Group.1, y=x)) +
+      geom_bar(stat="identity", fill="cadetblue3") +
+      labs(x=paste("Weekdays in", format(as.Date(input$date1, format="%m/%d/%Y"),"%Y")), y = "Rides")+
+      theme_minimal()
+  })
+  
+  output$weekTable1 <- DT::renderDataTable({
+    temp <- justOneYearReactiveFirst()
+    data <- aggregate(x = temp$rides, by = list(weekdays(as.Date(temp$newDate))), FUN = sum)
+    datatable(data[c("Group.1","x")], 
+              colnames = c('Weekday', 'Total Rides'),
+              options = list(pageLength = 8, searching = FALSE, lengthChange = FALSE, order = list(list(1, 'desc'))),  
+              rownames = FALSE
+    )
+  })
+  
+  output$weekBar2 <- renderPlot({
+    justOneYearSecond <- justOneYearReactiveSecond()
+    data2 <- aggregate(x = justOneYearSecond$rides, by = list(weekdays(as.Date(justOneYearSecond$newDate))), FUN = sum)
+    data2$Group.1 <- factor(data2$Group.1, levels= c("Monday", "Tuesday", 
+                                                   "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+    ggplot(data2, aes(x=Group.1, y=x)) +
+      geom_bar(stat="identity", fill="darkslategray4") +
+      labs(x=paste("Weekdays in", format(as.Date(input$date1, format="%m/%d/%Y"),"%Y")), y = "Rides")+
+      theme_minimal()
+  })
+  
+  output$weekTable2 <- DT::renderDataTable({
+    temp <- justOneYearReactiveSecond()
+    data <- aggregate(x = temp$rides, by = list(weekdays(as.Date(temp$newDate))), FUN = sum)
+    datatable(data[c("Group.1","x")], 
+              colnames = c('Weekday', 'Total Rides'),
+              options = list(pageLength = 8, searching = FALSE, lengthChange = FALSE, order = list(list(1, 'desc'))),  
+              rownames = FALSE
+    )
+  })
+  
+  # -- 4  ROW--
+  # show a bar chart and table of one station rides in months in spec year
+  output$monthBar1 <- renderPlot({
+    justOneMonthFirst <- justOneMonthReactiveFirst()
+
+    ggplot(justOneMonthFirst, aes(x=newDate, y=rides)) +
+      geom_bar(stat="identity", fill="cadetblue3") +
+      labs(x=paste("Months in", format(as.Date(input$date1, format="%m/%d/%Y"),"%Y")), y = "Rides") +
+      theme_minimal()
+  })
+  
+  output$monthTable1 <- DT::renderDataTable({
+    temp <- justOneMonthReactiveFirst()
+    data <- aggregate(x = temp$rides, by = list(month(as.Date(temp$newDate))), FUN = sum)
+
+    datatable(data[c("Group.1","x")], 
+              colnames = c('Month', 'Total Rides'),
+              options = list(pageLength = 8, searching = FALSE, lengthChange = FALSE, order = list(list(1, 'desc'))), 
+              rownames = FALSE
+    )
+  })
+  
+  output$monthBar2 <- renderPlot({
+    justOneMonthSecond <- justOneMonthReactiveSecond()
+    ggplot(justOneMonthSecond, aes(x=newDate, y=rides)) +
+      geom_bar(stat="identity", fill="darkslategray4") +
+      labs(x=paste("Months in", format(as.Date(input$date1, format="%m/%d/%Y"),"%Y")), y = "Rides") +
+      theme_minimal()
+  })
+  
+  output$monthTable2 <- DT::renderDataTable({
+    temp <- justOneMonthReactiveSecond()
+    data <- aggregate(x = temp$rides, by = list(month(as.Date(temp$newDate))), FUN = sum)
+
+    datatable(data[c("Group.1","x")], 
+              colnames = c('Month', 'Total Rides'),
+              options = list(pageLength = 8, searching = FALSE, lengthChange = FALSE, order = list(list(1, 'desc'))), 
+              rownames = FALSE
+    )
+  })
+  
+  # -- 5  ROW--
+  # show a bar chart and table of one station rides in years
+  output$yearBar1 <- renderPlot({
+    justOneStationFirst <- justOneStationReactiveFirst()
+    ggplot(justOneStationFirst, aes(x=newDate, y=rides)) +
+      geom_bar(stat="identity", fill="cadetblue3") +
+      labs(x=paste("Rides on ", input$Station1, " in ", format(as.Date(input$date1, format="%m/%d/%Y"),"%Y")), y = "Rides") +
+      theme_minimal()
+  })
+  
+  output$yearTable1 <- DT::renderDataTable({
+    temp <- justOneStationReactiveFirst()
+    data <- aggregate(x = temp$rides, by = list(year(as.Date(temp$newDate))), FUN = sum)
+
+    datatable(data[c("Group.1","x")], 
+              colnames = c('Year', 'Total Rides'),
+              options = list(pageLength = 8, searching = FALSE, lengthChange = FALSE, order = list(list(1, 'desc'))), 
+              rownames = FALSE
+    )
+  })
+  
+  output$yearBar2 <- renderPlot({
+    justOneStationSecond <- justOneStationReactiveSecond()
+    ggplot(justOneStationSecond, aes(x=newDate, y=rides)) +
+      geom_bar(stat="identity", fill="darkslategray4") +
+      labs(x=paste("Rides on ", input$Station2, " in ", format(as.Date(input$date1, format="%m/%d/%Y"),"%Y")), y = "Rides") +
+      theme_minimal()
+  })
+  
+  output$yearTable2 <- DT::renderDataTable({
+    temp <- justOneStationReactiveSecond()
+    data <- aggregate(x = temp$rides, by = list(year(as.Date(temp$newDate))), FUN = sum)
+    datatable(data[c("Group.1","x")], 
+              colnames = c('Year', 'Total Rides'),
+              options = list(pageLength = 8, searching = FALSE, lengthChange = FALSE, order = list(list(1, 'desc'))), 
+              rownames = FALSE
+    )
+  })
+  
+  # v <- justOneDayReactive()
   
   
+  output$map <- renderLeaflet({
+    df.20 <-justOneDayReactive()
+    
+    getColor <- function(allNedeedData) {
+      sapply(allNedeedData$rides, function(rides) {
+        if(rides <= 1000) {
+          "green"
+        } else if(rides <= 2500 ) {
+          "orange"
+        } else {
+          "red"
+        } })
+    }
+    
+    icons <- awesomeIcons(
+      icon = 'ios-close',
+      iconColor = 'white',
+      library = 'ion',
+      markerColor = getColor(df.20)
+    )
+    
+    pal <- colorNumeric(c("#70AC25", "#F2952F", "#D23D29"), domain = allNedeedData$rides)
+
+    if (input$mapTheme == 'Basic') {
+      leaflet(df.20) %>% addTiles() %>%
+        addAwesomeMarkers(~long, ~lat, icon=icons, label=~as.character(stationname), popup = ~as.character(stationname)) %>%
+        setView(lng = -87.64288412109156, lat = 41.88637870008067 , zoom = 12.5) %>%
+        addLegend("topright", pal = pal, values = ~rides,
+                  title = "Station load",
+                  opacity = 1
+        )
+      
+    } else if (input$mapTheme == 'Topo Map') {
+      leaflet(df.20) %>% addTiles() %>%
+        addProviderTiles("Esri.WorldTopoMap")  %>%
+        addAwesomeMarkers(~long, ~lat, icon=icons, label=~as.character(stationname)) %>%
+        setView(lng = -87.64288412109156, lat = 41.88637870008067 , zoom = 12.5) %>%
+        addLegend("topright", pal = pal, values = ~rides,
+                  title = "Station load",
+                  opacity = 1
+        )
+    } else if (input$mapTheme == 'Grey') {
+      leaflet(df.20) %>% addTiles() %>%
+        addAwesomeMarkers(~long, ~lat, icon=icons, label=~as.character(stationname)) %>%
+        setView(lng = -87.64288412109156, lat = 41.88637870008067 , zoom = 12.5) %>%
+        addLegend("topright", pal = pal, values = ~rides,
+                  title = "Station load",
+                  opacity = 1
+        ) %>%
+        addProviderTiles("Esri.WorldGrayCanvas")
+    }
+  })
+  
+  observeEvent(input$map_marker_click, { 
+    p <- input$map_marker_click
+    print(p)
+    # why p doesnt have an id?????
+    
+  })
+
 }
 
 # Run the application 
