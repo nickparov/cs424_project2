@@ -1,5 +1,5 @@
 <h2>Shiny app link</h2>
-https://sf8nhp-malika-yelyubayeva.shinyapps.io/CS424_Project1/ 
+https://sf8nhp-malika-yelyubayeva.shinyapps.io/cs424proj2/
 
 <h2> About the app. </h2>
 The application was created to visualize on the bar charts the data about the Chicago stations, more precisely about UIC-Halsted, O’Hare and Indiana stations. Data depicts the number of rides that was taken on those stations from 2001 to 2021 (November). You can see that the dashboard is divided on three columns and each column represent different station data. First row shows the overall load on certain stations throughout the years. Then, you can see the load on that station in certain month, then weekdays and then days.
